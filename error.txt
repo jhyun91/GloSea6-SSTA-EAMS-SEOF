@@ -1,0 +1,46 @@
+---------------------------------------------------------------------------
+ValueError                                Traceback (most recent call last)
+Cell In[7], line 54
+     51 persistence_absolute.name = "sst_trend_adjusted_persistence_absolute"
+     53 # 3) Convert to the same fixed-base anomaly used for SEOF verification.
+---> 54 persistence_forecast, persistence_observed = fixed_base_anomaly(
+     55     absolute_forecast_target=persistence_absolute,
+     56     observed_sst=sst,
+     57     fixed_base_period=fixed_base_period,
+     58     sea_mask=sea_mask,
+     59 )
+     61 # Numerical consistency check for the verifying observations.
+     62 obs_ref = observed.sel(time=slice(*cfg["periods"]["verification"]))
+
+File ~/Library/CloudStorage/OneDrive-개인/jhyun91/GloSea6-SSTA-EAMS-SEOF_v1/src/eams_seof/forecast.py:268, in fixed_base_anomaly(absolute_forecast_target, observed_sst, fixed_base_period, sea_mask)
+    263 observed_anomaly = (
+    264     observed_sst.groupby("time.month") - climatology
+    265 ).astype(np.float32)
+    266 observed_anomaly.name = "sst_observed_fixed_base_anomaly"
+--> 268 forecast_anomaly = forecast_anomaly.reset_coords("month", drop=True)
+    269 observed_anomaly = observed_anomaly.reset_coords("month", drop=True)
+    271 return forecast_anomaly, observed_anomaly
+
+File ~/anaconda3/envs/pplot/lib/python3.9/site-packages/xarray/core/dataarray.py:1000, in DataArray.reset_coords(self, names, drop)
+    998 if names is None:
+    999     names = set(self.coords) - set(self._indexes)
+-> 1000 dataset = self.coords.to_dataset().reset_coords(names, drop)
+   1001 if drop:
+   1002     return self._replace(coords=dataset._variables)
+
+File ~/anaconda3/envs/pplot/lib/python3.9/site-packages/xarray/core/dataset.py:1741, in Dataset.reset_coords(self, names, drop)
+   1739 else:
+   1740     names = list(names)
+-> 1741 self._assert_all_in_dataset(names)
+   1742 bad_coords = set(names) & set(self._indexes)
+   1743 if bad_coords:
+
+File ~/anaconda3/envs/pplot/lib/python3.9/site-packages/xarray/core/dataset.py:5047, in Dataset._assert_all_in_dataset(self, names, virtual_okay)
+   5045     bad_names -= self.virtual_variables
+   5046 if bad_names:
+-> 5047     raise ValueError(
+   5048         "One or more of the specified variables "
+   5049         "cannot be found in this dataset"
+   5050     )
+
+ValueError: One or more of the specified variables cannot be found in this dataset
