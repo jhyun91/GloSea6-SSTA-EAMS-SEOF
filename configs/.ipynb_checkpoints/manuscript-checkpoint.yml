@@ -1,0 +1,65 @@
+paths:
+  oisst_raw: "data/raw/OISST/sst.mon.mean.nc"
+  oisst_smoothed: "data/processed/OISST_monthly_smoothed_13x13.nc"
+  iho_shapefile: "data/external/World_Seas_IHO_v3/World_Seas_IHO_v3.shp"
+  region_masks: "data/processed/region_masks.nc"
+  seof_model: "outputs/model/seof.nc"
+  forecast_model: "outputs/model/forecast_model.nc"
+  forecast_output: "outputs/forecasts/forecasts.nc"
+  mode1_forecast_output: "outputs/forecasts/forecasts_mode1.nc"
+  skill_output: "outputs/verification/forecast_skill.nc"
+  acc_refinement_output: "outputs/verification/acc_refinement.nc"
+
+domain:
+  latitude: [20.0, 50.0]
+  longitude: [120.0, 140.0]
+
+periods:
+  data_start: "1993-01-01"
+  training: ["1993-01-01", "2012-12-31"]
+  verification: ["2013-01-01", "2025-12-31"]
+  fixed_anomaly_base: ["1993-01-01", "2016-12-31"]
+
+preprocessing:
+  spatial_smoothing_points: 13
+
+seof:
+  retained_modes: 3
+  latitude_weighting: true
+  normalize_aligned_monthly_patterns: true
+
+forecast:
+  input_sequence_months: 12
+  maximum_lead_months: 12
+  shrinkage_pseudocount: 24
+  lag_polarity_regularization: "lag0_nonnegative"
+
+rolling_correction:
+  enabled: true
+  apply_from: "2013-01-01"
+  archive_start: "2013-01-01"
+  window_years: 7
+  minimum_archive_months: 12
+
+verification:
+  primary_configuration: "corrected"
+  sensitivity_configuration: "uncorrected"
+  bootstrap_samples: 5000
+  ci_level: 0.95
+  minimum_samples: 10
+  minimum_bootstrap_valid: 500
+  fdr_q: 0.05
+  target_month_fdr_scope: "region"
+  seasonal_fdr_scope: "subregion"
+  random_seed: 42
+  acc_refinement_quantile: 0.25
+
+figs:
+  seof_modes: "outputs/png/seof_decomposition.png"
+  recent_forecast: "outputs/png/recent_ssta_forecasts.png"
+  recent_forecast_uncorrected: "outputs/png/recent_ssta_forecasts_uncorrected.png"
+  future_forecast: "outputs/png/future_ssta_forecasts.png"
+  future_forecast_uncorrected: "outputs/png/future_ssta_forecasts_uncorrected.png"
+  eams_skill: "outputs/png/eams_acc_msss.png"
+  regional_skill: "outputs/png/regional_acc_msss.png"
+  acc_refinement: "outputs/png/acc_refinement.png"
