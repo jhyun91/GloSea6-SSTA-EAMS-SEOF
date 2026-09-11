@@ -1,0 +1,95 @@
+paths:
+  oisst_raw: data/raw/OISST/sst.mon.mean.nc
+  oisst_smoothed: data/processed/OISST_monthly_smoothed_13x13.nc
+  iho_shapefile: data/external/World_Seas_IHO_v3/World_Seas_IHO_v3.shp
+  region_masks: data/processed/region_masks.nc
+
+  seof_model: outputs/model/seof.nc
+  forecast_model: outputs/model/forecast_model.nc
+  mode1_forecast_model: outputs/model/forecast_model_mode1.nc
+
+  forecast_output: outputs/forecasts/forecasts.nc
+  mode1_forecast_output: outputs/forecasts/forecasts_mode1.nc
+
+  skill_configurations: outputs/verification/Skill_Configurations.nc
+  skill_eams: outputs/verification/Skill_EAMS.nc
+  skill_regional: outputs/verification/Skill_Regional.nc
+  skill_persistence: outputs/verification/Skill_Persistence.nc
+  skill_persistence_benchmark: outputs/verification/Skill_Persistence_Benchmark.nc
+  correction_sensitivity: outputs/verification/Correction_Sensitivity.csv
+  correction_archive_samples: outputs/verification/Correction_Archive_Samples.csv
+  skill_modes: outputs/verification/Skill_Modes.csv
+  skill_modes_regional: outputs/verification/Skill_Modes_Regional.csv
+
+
+domain:
+  latitude: [20.0, 50.0]
+  longitude: [120.0, 140.0]
+
+
+periods:
+  data_start: '1993-01-01'
+  training: ['1993-01-01', '2012-12-31']
+  verification: ['2013-01-01', '2025-12-31']
+  forecast_anomaly_reference: ['1993-01-01', '2016-12-31']
+  verification_anomaly_reference: ['1993-01-01', '2012-12-31']
+
+
+preprocessing:
+  spatial_smoothing_points: 13
+
+
+seof:
+  retained_modes: 3
+  latitude_weighting: true
+  normalize_aligned_monthly_patterns: true
+
+
+forecast:
+  input_sequence_months: 12
+  maximum_lead_months: 12
+  shrinkage_pseudocount: 24
+  lag_polarity_regularization: lag0_nonnegative
+
+
+rolling_correction:
+  enabled: true
+  apply_from: '2013-01-01'
+  archive_start: '2013-01-01'
+  window_years: 7
+  minimum_archive_months: 12
+
+
+verification:
+  primary_configuration: corrected
+  sensitivity_configuration: uncorrected
+  one_mode_configuration: one_mode_uncorrected
+  persistence_configuration: persistence
+  bootstrap_samples: 5000
+  null_samples: 5000
+  ci_level: 0.95
+  minimum_samples: 10
+  minimum_bootstrap_valid: 500
+  fdr_q: 0.10
+  target_month_fdr_scope: region
+  seasonal_fdr_scope: region
+  random_seed: 42
+
+
+
+figures:
+  seof_modes: outputs/png/SEOF_Decomposition.png
+
+  recent_forecast: outputs/png/Recent_SSTA_Forecasts.png
+  recent_forecast_uncorrected: outputs/png/Recent_SSTA_Forecasts_Uncorrected.png
+  future_forecast: outputs/png/Future_SSTA_Forecasts.png
+  future_forecast_uncorrected: outputs/png/Future_SSTA_Forecasts_Uncorrected.png
+
+  target_month_skill: outputs/png/Target_Month_Skill.png
+  regional_skill: outputs/png/Regional_Skill.png
+  persistence_skill: outputs/png/Persistence_Skill.png
+  centered_acc_sensitivity: outputs/png/Centered_ACC_Sensitivity.png
+  mode_comparison: outputs/png/Mode_Comparison.png
+  regional_mode_comparison: outputs/png/Regional_Mode_Comparison.png
+
+  seasonal_memory: outputs/png/Seasonal_Memory_Diagnostics.png
