@@ -228,13 +228,26 @@ def forecast_to_target(
 def fixed_base_anomaly(
     absolute_forecast_target: xr.DataArray,
     observed_sst: xr.DataArray,
-    fixed_base_period: tuple[str, str],
+    fixed_base_period: tuple[str, str] | None = None,
     sea_mask: xr.DataArray | None = None,
+    anomaly_reference_period: tuple[str, str] | None = None,
 ) -> tuple[xr.DataArray, xr.DataArray]:
-    'Convert forecasts and observations to a fixed climatology base.'
+    """Convert forecasts and observations to one fixed climatology base.
+
+    ``anomaly_reference_period`` is the preferred explicit name used by the
+    revised verification notebook.  ``fixed_base_period`` is retained for
+    backward compatibility; if both are supplied they must agree.
+    """
+    if anomaly_reference_period is None and fixed_base_period is None:
+        raise ValueError("Provide anomaly_reference_period or fixed_base_period.")
+    if anomaly_reference_period is None:
+        anomaly_reference_period = fixed_base_period
+    if fixed_base_period is not None and tuple(fixed_base_period) != tuple(anomaly_reference_period):
+        raise ValueError("fixed_base_period and anomaly_reference_period disagree.")
+
     climatology = fixed_clim(
         observed_sst,
-        fixed_base_period,
+        tuple(anomaly_reference_period),
         sea_mask=sea_mask,
     )
 

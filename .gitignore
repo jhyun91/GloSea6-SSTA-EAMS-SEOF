@@ -1,5 +1,17 @@
+# Data and generated products
 data/
 outputs/
 *.nc
 *.shp
 *.png
+
+# Python / Jupyter
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/

@@ -5,8 +5,23 @@ paths:
   region_masks: "data/processed/region_masks.nc"
   seof_model: "outputs/model/seof.nc"
   forecast_model: "outputs/model/forecast_model.nc"
+  mode1_forecast_model: "outputs/model/forecast_model_mode1.nc"
   forecast_output: "outputs/forecasts/forecasts.nc"
   mode1_forecast_output: "outputs/forecasts/forecasts_mode1.nc"
+
+  # Verification products used by notebook 06.
+  skill_configurations: "outputs/verification/skill_configurations.nc"
+  skill_eams: "outputs/verification/skill_eams.nc"
+  skill_regional: "outputs/verification/skill_regional.nc"
+  skill_persistence: "outputs/verification/skill_persistence.nc"
+  skill_persistence_benchmark: "outputs/verification/persistence_benchmark.nc"
+  correction_sensitivity: "outputs/verification/correction_sensitivity.csv"
+  correction_archive_samples: "outputs/verification/correction_archive_samples.csv"
+  skill_modes: "outputs/verification/mode_skill_eams.csv"
+  skill_modes_regional: "outputs/verification/mode_skill_regional.csv"
+  validation_summary: "outputs/verification/release_validation_summary.csv"
+
+  # Backward-compatible names retained for older notebooks/scripts.
   skill_output: "outputs/verification/forecast_skill.nc"
   acc_refinement_output: "outputs/verification/acc_refinement.nc"
 
@@ -18,7 +33,10 @@ periods:
   data_start: "1993-01-01"
   training: ["1993-01-01", "2012-12-31"]
   verification: ["2013-01-01", "2025-12-31"]
-  fixed_anomaly_base: ["1993-01-01", "2016-12-31"]
+  # Forecast and observed anomalies used in verification are referenced to
+  # the same fixed training-period monthly climatology.
+  verification_anomaly_reference: ["1993-01-01", "2012-12-31"]
+  fixed_anomaly_base: ["1993-01-01", "2012-12-31"]
 
 preprocessing:
   spatial_smoothing_points: 13
@@ -31,8 +49,10 @@ seof:
 forecast:
   input_sequence_months: 12
   maximum_lead_months: 12
+  model_type: "correlation_lag_template"
   shrinkage_pseudocount: 24
   lag_polarity_regularization: "lag0_nonnegative"
+  lead0_identity: true
 
 rolling_correction:
   enabled: true
@@ -44,13 +64,16 @@ rolling_correction:
 verification:
   primary_configuration: "corrected"
   sensitivity_configuration: "uncorrected"
+  one_mode_configuration: "one_mode"
+  persistence_configuration: "persistence"
   bootstrap_samples: 5000
+  null_samples: 5000
   ci_level: 0.95
   minimum_samples: 10
   minimum_bootstrap_valid: 500
-  fdr_q: 0.1
+  fdr_q: 0.10
   target_month_fdr_scope: "region"
-  seasonal_fdr_scope: "subregion"
+  seasonal_fdr_scope: "region"
   random_seed: 42
   acc_refinement_quantile: 0.25
 

@@ -1,46 +1,43 @@
 # Seasonally evolving SST prediction in the East Asian marginal seas
 
-Jupyter-based implementation of the SEOF seasonal SST prediction workflow for the East Asian marginal seas.
+Reproducible Jupyter implementation of the SEOF-based seasonal SST prediction workflow used for the manuscript.
+
+## Frozen paper release
+
+**Release:** `v1.0.0-paper`
+
+The production forecast is frozen as:
+
+- training period: **1993–2012**
+- verification period: **2013–2025**
+- retained basis: **SEOF1–3**
+- monthly projection: cosine-latitude-weighted least squares (`G A = b`)
+- predictor history: preceding **12 monthly projection scores**
+- forecast mapping: pooled + target-month-specific **lag-correlation templates**
+- target-month shrinkage pseudocount: **24**
+- lag sequence normalization: unit absolute sum
+- lead 0: exact same-month reconstruction diagnostic; not used in skill assessment
+- primary forecast: three-mode forecast with **causal rolling mean-state correction**
+- mode sensitivity: independently built **one-mode** versus **uncorrected three-mode** forecast
+- anomaly verification reference: fixed **1993–2012 monthly climatology**
+
+The ridge distributed-lag experiment used during model development is **not part of the production release**.
 
 ## Installation
 
 ```bash
 git clone https://github.com/jhyun91/GloSea6-SSTA-EAMS-SEOF.git
 cd GloSea6-SSTA-EAMS-SEOF
-
 conda env create -f environment.yml
 conda activate eams-seof
 pip install -e .
 ```
 
-## Data
+The environment is pinned to Python 3.10, Matplotlib 3.4.3, ProPlot 0.9.7, and NumPy < 2 for reproducible figure rendering.
 
-### NOAA OISST v2.1
+## Workflow
 
-Notebook `00_Download_OISST.ipynb` downloads the monthly NOAA OISST v2.1 dataset. The equivalent command is:
-
-```bash
-mkdir -p data/raw/OISST
-wget -c \
-https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.mon.mean.nc \
--O data/raw/OISST/sst.mon.mean.nc
-```
-
-### IHO Sea Areas
-
-Download **IHO Sea Areas — Version 3 (2018)** from the
-[Marine Regions download page](https://www.marineregions.org/downloads.php).
-Place the shapefile and companion files under:
-
-```text
-data/external/World_Seas_IHO_v3/
-```
-
-The IHO data are not redistributed with this repository.
-
-## Reproduce the workflow
-
-Run the notebooks in order:
+Run in order:
 
 1. `00_Download_OISST.ipynb`
 2. `01_Preprocess_OISST.ipynb`
@@ -49,26 +46,28 @@ Run the notebooks in order:
 5. `04_SEOF_Forecast_Model.ipynb`
 6. `05_Generate_Forecasts.ipynb`
 7. `06_Evaluate_Forecast_Skill.ipynb`
+8. `07_Release_QA.ipynb`
 
-The manuscript configuration is `configs/manuscript.yml`.
-Notebook 05 also generates a mode-1 reference forecast used only to quantify the added ACC from SEOF modes 2–3.
+Optional diagnostic only:
 
-## Model configuration
+9. `08_Lag_Phase_Diagnostics.ipynb`
 
-- Training: 1993–2012
-- Verification: 2013–2025
-- SST smoothing: 13 × 13 grid points
-- Retained SEOFs: 3
-- Monthly SEOF alignment: cosine-latitude-weighted orthogonal Procrustes
-- Input sequence: 12 months
-- Forecast leads: 0–12 months
-- Lag-sequence polarity: lag-0 nonnegative convention
-- Rolling climatological correction: 7 years
-- Fixed verification anomaly base: 1993–2016
-- Primary ACC: uncentered anomaly correlation relative to the fixed anomaly base
+`06_Evaluate_Forecast_Skill.ipynb` retains the manuscript plotting layout and includes optional verification-period time-series diagnostics at the end.
+
+## Statistical verification
+
+- primary ACC: uncentered anomaly correlation
+- centered ACC: sensitivity diagnostic
+- MSSS reference: zero anomaly relative to the fixed 1993–2012 climatology
+- ACC support: temporal-permutation Monte Carlo null
+- MSSS support: paired squared-error-advantage sign-flip null
+- Benjamini–Hochberg FDR: `q = 0.10`
+- one-mode minus three-mode differences: descriptive retained-basis sensitivity; no configuration-difference inferential test
 
 ## Tests
 
 ```bash
 pytest -q
 ```
+
+See `MODEL_SPEC.md` and `RELEASE_NOTES.md` for the frozen model definition and release decisions.

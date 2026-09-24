@@ -345,58 +345,74 @@ def project_seof(
     detrended_sst_anomaly: xr.DataArray,
     aligned_patterns: xr.DataArray,
     seof_mean: xr.DataArray,
+    condition_threshold: float = 1.0e8,
 ) -> xr.DataArray:
-    'Project monthly SST anomalies onto the forecast basis.'
+    """Project monthly SST anomalies onto the non-orthogonal forecast basis.
 
-    x = detrended_sst_anomaly.transpose(
-        "time", "lat", "lon"
-    )
+    The aligned monthly SEOF slices are not guaranteed to be mutually
+    orthogonal.  Projection coefficients are therefore obtained from the
+    cosine-latitude-weighted least-squares normal equations G A = b, where
+    G is the month-specific Gram matrix.  This makes projection and
+    reconstruction internally consistent and matches the Supplementary
+    Methods formulation.
+    """
 
-    patterns = aligned_patterns.transpose(
-        "mode", "month", "lat", "lon"
-    )
+    x = detrended_sst_anomaly.transpose("time", "lat", "lon")
+    patterns = aligned_patterns.transpose("mode", "month", "lat", "lon")
+    mean = seof_mean.transpose("month", "lat", "lon")
 
-    mean = seof_mean.transpose(
-        "month", "lat", "lon"
-    )
+    w = _latitude_weights(x.lat).values[:, None]
+    w2d = np.broadcast_to(w, (x.sizes["lat"], x.sizes["lon"]))
+    month_index = pd.DatetimeIndex(x.time.values).month
 
-    w = _latitude_weights(
-        x.lat
-    ).values[:, None]
-
-    month_index = pd.DatetimeIndex(
-        x.time.values
-    ).month
-
-    values = np.full(
-        (
-            x.sizes["time"],
-            patterns.sizes["mode"],
-        ),
-        np.nan,
-        dtype=np.float32,
-    )
+    n_mode = patterns.sizes["mode"]
+    values = np.full((x.sizes["time"], n_mode), np.nan, dtype=np.float32)
 
     xv = x.values
     ev = patterns.values
     meanv = mean.values
 
+    # Pre-compute the month-specific weighted Gram matrices.
+    gram = np.full((12, n_mode, n_mode), np.nan, dtype=np.float64)
+    gram_pinv = np.full_like(gram, np.nan)
+    for im in range(12):
+        e = ev[:, im].reshape(n_mode, -1).astype(np.float64)
+        ww = np.broadcast_to(w, ev[:, im].shape[1:]).reshape(-1).astype(np.float64)
+        valid = np.isfinite(ww) & np.all(np.isfinite(e), axis=0)
+        ew = e[:, valid] * ww[valid][None, :]
+        g = ew @ e[:, valid].T
+        gram[im] = g
+        cond = np.linalg.cond(g) if np.all(np.isfinite(g)) else np.inf
+        if (not np.isfinite(cond)) or cond > condition_threshold:
+            gram_pinv[im] = np.linalg.pinv(g, rcond=1.0e-10)
+
     for it in range(x.sizes["time"]):
-
         im = int(month_index[it]) - 1
+        field = (xv[it] - meanv[im]).astype(np.float64)
+        e = ev[:, im].astype(np.float64)
 
-        field = xv[it] - meanv[im]
+        valid = np.isfinite(field) & np.isfinite(w2d)
+        valid &= np.all(np.isfinite(e), axis=0)
+        if not np.any(valid):
+            continue
 
-        for ik in range(
-            patterns.sizes["mode"]
-        ):
-            pattern = ev[ik, im]
+        b = np.array([
+            np.sum(field[valid] * e[ik][valid] * w2d[valid])
+            for ik in range(n_mode)
+        ], dtype=np.float64)
 
-            values[it, ik] = np.nansum(
-                field * pattern * w
-            )
+        g = gram[im]
+        if np.all(np.isfinite(gram_pinv[im])):
+            coef = gram_pinv[im] @ b
+        else:
+            try:
+                coef = np.linalg.solve(g, b)
+            except np.linalg.LinAlgError:
+                coef = np.linalg.pinv(g, rcond=1.0e-10) @ b
 
-    return xr.DataArray(
+        values[it] = coef.astype(np.float32)
+
+    out = xr.DataArray(
         values,
         coords={
             "time": x.time,
@@ -405,6 +421,11 @@ def project_seof(
         dims=("time", "mode"),
         name="monthly_projection_score",
     )
+    out.attrs["projection"] = (
+        "cos(lat)-weighted least squares using month-specific Gram matrices"
+    )
+    out.attrs["projection_method"] = "weighted_gram_dual"
+    return out
 
 
 def weighted_norms(
@@ -455,3 +476,45 @@ def weighted_gram(
         )
 
     return xr.concat(mats, dim="month")
+
+
+def project_seof_legacy_inner_product(
+    detrended_sst_anomaly: xr.DataArray,
+    aligned_patterns: xr.DataArray,
+    seof_mean: xr.DataArray,
+) -> xr.DataArray:
+    """Legacy independent-inner-product projection retained for diagnostics.
+
+    This reproduces the projection used by the uploaded repository before the
+    Gram-matrix least-squares correction. It should not be used by the revised
+    forecast pipeline.
+    """
+    x = detrended_sst_anomaly.transpose("time", "lat", "lon")
+    patterns = aligned_patterns.transpose("mode", "month", "lat", "lon")
+    mean = seof_mean.transpose("month", "lat", "lon")
+    w = _latitude_weights(x.lat).values[:, None]
+    month_index = pd.DatetimeIndex(x.time.values).month
+
+    values = np.full(
+        (x.sizes["time"], patterns.sizes["mode"]),
+        np.nan,
+        dtype=np.float32,
+    )
+    xv = x.values
+    ev = patterns.values
+    meanv = mean.values
+
+    for it in range(x.sizes["time"]):
+        im = int(month_index[it]) - 1
+        field = xv[it] - meanv[im]
+        for ik in range(patterns.sizes["mode"]):
+            values[it, ik] = np.nansum(field * ev[ik, im] * w)
+
+    out = xr.DataArray(
+        values,
+        coords={"time": x.time, "mode": patterns.mode},
+        dims=("time", "mode"),
+        name="monthly_projection_score",
+    )
+    out.attrs["projection"] = "legacy independent weighted inner products"
+    return out

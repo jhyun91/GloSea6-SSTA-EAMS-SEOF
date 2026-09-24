@@ -1041,9 +1041,9 @@ def plot_persistence_benchmark(
     pss = ds["TARGET_PSS"].sel(region=region).transpose("lead", "month").values
     sig_pss = ds["TARGET_SIG_PSS"].sel(region=region).transpose("lead", "month").values.astype(bool)
 
-    seq_cmap = mpl.colormaps["YlOrRd"]
+    seq_cmap = mpl.cm.get_cmap("YlOrRd")
     seq_norm = mpl.colors.Normalize(vmin=0.0, vmax=1.0)
-    div_cmap = mpl.colormaps["RdBu_r"]
+    div_cmap = mpl.cm.get_cmap("RdBu_r")
     delta_lim = max(0.2, float(np.nanpercentile(np.abs(delta_acc), 95)))
     pss_lim = max(0.5, float(np.nanpercentile(np.abs(pss), 95)))
     delta_norm = mpl.colors.TwoSlopeNorm(vmin=-delta_lim, vcenter=0.0, vmax=delta_lim)
@@ -1083,6 +1083,7 @@ def plot_centered_acc_sensitivity(
     configuration="corrected",
     region="EAMS",
     savepath=None,
+    exclude_lead0=True,
 ):
     """Compare uncentered and centered target-month ACC."""
     import matplotlib as mpl
@@ -1101,9 +1102,9 @@ def plot_centered_acc_sensitivity(
     if "TARGET_SIG_CENTERED_ACC" in ds:
         sig_cen = ds["TARGET_SIG_CENTERED_ACC"].sel(region=region).transpose("lead", "month").values.astype(bool)
 
-    seq_cmap = mpl.colormaps["YlOrRd"]
+    seq_cmap = mpl.cm.get_cmap("YlOrRd")
     seq_norm = mpl.colors.Normalize(vmin=0.0, vmax=1.0)
-    div_cmap = mpl.colormaps["RdBu_r"]
+    div_cmap = mpl.cm.get_cmap("RdBu_r")
     diff_lim = max(0.2, float(np.nanpercentile(np.abs(diff), 95)))
     diff_norm = mpl.colors.TwoSlopeNorm(vmin=-diff_lim, vcenter=0.0, vmax=diff_lim)
 
@@ -1141,6 +1142,7 @@ def plot_anomaly_base_sensitivity(
     alternate_base,
     region="EAMS",
     savepath=None,
+    exclude_lead0=True,
 ):
     """Plot alternate-minus-reference changes in target-month ACC and MSSS."""
     import matplotlib as mpl
@@ -1164,7 +1166,7 @@ def plot_anomaly_base_sensitivity(
         - ref["TARGET_MSSS"].sel(region=region)
     ).transpose("lead", "month").values
 
-    cmap = mpl.colormaps["RdBu_r"]
+    cmap = mpl.cm.get_cmap("RdBu_r")
     acc_lim = max(0.1, float(np.nanpercentile(np.abs(delta_acc), 95)))
     msss_lim = max(0.1, float(np.nanpercentile(np.abs(delta_msss), 95)))
     norms = [
@@ -1441,3 +1443,514 @@ def plot_acc_refinement(summary_ds, savepath="ACC_Refinement.png"):
     fig.save(str(jpg_path), dpi=600)
 
     return fig, axs
+# ============================================================================
+# Revised manuscript verification API
+# ============================================================================
+
+def _null_pvalue(forecast, observed, metric, n_null, rng):
+    """One-sided Monte-Carlo p-value for positive forecast skill.
+
+    ACC / CENTERED_ACC: temporal forecast-observation correspondence is removed
+    by randomly permuting the observed cases.
+
+    MSSS: the paired squared-error advantage relative to the zero-anomaly
+    reference is sign-flipped, preserving the paired error magnitudes while
+    imposing a null of zero mean advantage.
+    """
+    f, o = _valid(forecast, observed, min_samples=3)
+    if f is None:
+        return np.nan
+    metric = metric.upper()
+    if metric == "ACC":
+        stat = acc(f, o, min_samples=3)
+    elif metric == "CENTERED_ACC":
+        stat = acc_centered(f, o, min_samples=3)
+    elif metric == "MSSS":
+        stat = msss(f, o, min_samples=3)
+    else:
+        raise ValueError(metric)
+    if not np.isfinite(stat):
+        return np.nan
+
+    n = f.size
+    if metric in {"ACC", "CENTERED_ACC"}:
+        # Vectorized random permutations.  n is small for target-month skill,
+        # so this is both reproducible and inexpensive.
+        order = np.argsort(rng.random((int(n_null), n)), axis=1)
+        op = o[order]
+        ff = np.broadcast_to(f[None, :], op.shape)
+        if metric == "CENTERED_ACC":
+            ff = ff - np.mean(ff, axis=1, keepdims=True)
+            op = op - np.mean(op, axis=1, keepdims=True)
+        denom = np.sqrt(np.sum(ff ** 2, axis=1) * np.sum(op ** 2, axis=1))
+        null = np.divide(
+            np.sum(ff * op, axis=1),
+            denom,
+            out=np.full(int(n_null), np.nan, dtype=float),
+            where=np.isfinite(denom) & (denom > 0),
+        )
+    else:
+        advantage = o ** 2 - (f - o) ** 2
+        denom = np.mean(o ** 2)
+        if not np.isfinite(denom) or denom <= 0:
+            return np.nan
+        signs = rng.choice(np.array([-1.0, 1.0]), size=(int(n_null), n))
+        null = np.mean(signs * advantage[None, :], axis=1) / denom
+
+    null = null[np.isfinite(null)]
+    if null.size == 0:
+        return np.nan
+    return float((1.0 + np.sum(null >= stat)) / (1.0 + null.size))
+
+
+def _score_matrix_null(
+    forecast,
+    observed,
+    masks,
+    grouping,
+    min_samples,
+    n_null,
+    fdr_q,
+    fdr_scope,
+    seed,
+    do_significance=True,
+):
+    forecast = _target_time(forecast)
+    observed = _target_time(observed)
+    leads = forecast.lead.values.astype(int)
+    regions = list(masks)
+    groups = np.arange(1, 13) if grouping == "month" else np.array(list(SEASON_MONTHS))
+    group_dim = "month" if grouping == "month" else "season"
+
+    shape = (len(regions), len(leads), len(groups))
+    coords = {"region": regions, "lead": leads, group_dim: groups}
+    dims = ("region", "lead", group_dim)
+    metric_names = ["ACC", "CENTERED_ACC", "MSSS", "BIAS", "RMSE", "STD_RATIO", "N"]
+    fields = {
+        name: xr.DataArray(np.full(shape, np.nan, dtype=np.float32), coords=coords, dims=dims)
+        for name in metric_names
+    }
+    for metric in ["ACC", "CENTERED_ACC", "MSSS"]:
+        fields[f"P_{metric}_RAW"] = xr.DataArray(
+            np.full(shape, np.nan, dtype=np.float32), coords=coords, dims=dims
+        )
+
+    for ir, region in enumerate(regions):
+        f_reg = region_mean(forecast, masks[region])
+        o_reg = region_mean(observed, masks[region])
+        for il, lead in enumerate(leads):
+            f = f_reg.sel(lead=lead)
+            f, o = xr.align(f, o_reg, join="inner")
+            for ig, group in enumerate(groups):
+                if grouping == "month":
+                    ff = f.where(f.target_time.dt.month == int(group), drop=True)
+                    oo = o.where(o.target_time.dt.month == int(group), drop=True)
+                else:
+                    months = SEASON_MONTHS[str(group)]
+                    ff = f.where(f.target_time.dt.month.isin(months), drop=True)
+                    oo = o.where(o.target_time.dt.month.isin(months), drop=True)
+                    ff_count = ff.resample(target_time="YS").count()
+                    oo_count = oo.resample(target_time="YS").count()
+                    ff = ff.resample(target_time="YS").mean().where(ff_count >= 3)
+                    oo = oo.resample(target_time="YS").mean().where(oo_count >= 3)
+
+                ff, oo = xr.align(ff, oo, join="inner")
+                valid = np.isfinite(ff.values) & np.isfinite(oo.values)
+                fv = ff.values[valid]
+                ov = oo.values[valid]
+                if fv.size < int(min_samples):
+                    continue
+                loc = {"region": region, "lead": lead, group_dim: group}
+                scores = metrics(fv, ov, min_samples=min_samples)
+                for name in metric_names:
+                    fields[name].loc[loc] = scores[name]
+
+                if do_significance:
+                    for jm, metric in enumerate(["ACC", "CENTERED_ACC", "MSSS"]):
+                        rng = np.random.default_rng(
+                            int(seed) + 100000 * ir + 1000 * il + 10 * ig + jm
+                        )
+                        fields[f"P_{metric}_RAW"].loc[loc] = _null_pvalue(
+                            fv, ov, metric, n_null=n_null, rng=rng
+                        )
+
+    for metric in ["ACC", "CENTERED_ACC", "MSSS"]:
+        raw = fields[f"P_{metric}_RAW"]
+        adj = xr.full_like(raw, np.nan)
+        sig = xr.zeros_like(raw, dtype=bool)
+        if do_significance:
+            if fdr_scope in {"region", "subregion"}:
+                for ir in range(raw.sizes["region"]):
+                    reject, values = bh_fdr(raw.isel(region=ir).values.ravel(), alpha=fdr_q)
+                    adj.values[ir] = values.reshape(raw.isel(region=ir).shape)
+                    sig.values[ir] = reject.reshape(raw.isel(region=ir).shape)
+            elif fdr_scope == "global":
+                reject, values = bh_fdr(raw.values.ravel(), alpha=fdr_q)
+                adj.values[:] = values.reshape(raw.shape)
+                sig.values[:] = reject.reshape(raw.shape)
+            else:
+                raise ValueError("fdr_scope must be 'region', 'subregion', or 'global'.")
+        fields[f"P_{metric}_FDR"] = adj.astype(np.float32)
+        fields[f"SIG_{metric}"] = (
+            sig & np.isfinite(fields[metric]) & (fields[metric] > 0)
+        )
+    return xr.Dataset(fields)
+
+
+def _lead_metrics(forecast, observed, masks, min_samples=3):
+    forecast = _target_time(forecast)
+    observed = _target_time(observed)
+    records = []
+    for region, mask in masks.items():
+        f_reg = region_mean(forecast, mask)
+        o_reg = region_mean(observed, mask)
+        rows = []
+        for lead in forecast.lead.values.astype(int):
+            f, o = xr.align(f_reg.sel(lead=lead), o_reg, join="inner")
+            rows.append(metrics(f.values, o.values, min_samples=min_samples))
+        records.append(
+            xr.Dataset(
+                {
+                    name: ("lead", np.array([row[name] for row in rows], dtype=np.float32))
+                    for name in ["ACC", "CENTERED_ACC", "MSSS", "BIAS", "RMSE", "STD_RATIO", "N"]
+                },
+                coords={"lead": forecast.lead.values.astype(int)},
+            ).expand_dims(region=[region])
+        )
+    return xr.concat(records, dim="region")
+
+
+def _evaluate_configuration_null(
+    forecast,
+    observed,
+    masks,
+    verification_period,
+    min_samples,
+    n_null,
+    fdr_q,
+    target_month_fdr_scope,
+    seasonal_fdr_scope,
+    seed,
+    do_significance,
+):
+    forecast = _target_time(forecast).sel(target_time=slice(*verification_period))
+    observed = _target_time(observed).sel(target_time=slice(*verification_period))
+    forecast, observed = xr.align(forecast, observed, join="inner")
+
+    lead = _lead_metrics(forecast, observed, masks, min_samples=3)
+    target = _score_matrix_null(
+        forecast, observed, masks, "month", min_samples, n_null, fdr_q,
+        target_month_fdr_scope, seed, do_significance=do_significance,
+    )
+    seasonal = _score_matrix_null(
+        forecast, observed, masks, "season", min_samples, n_null, fdr_q,
+        seasonal_fdr_scope, seed + 200000, do_significance=do_significance,
+    )
+    out = xr.Dataset()
+    for name, da in lead.data_vars.items():
+        out[f"LEAD_{name}"] = da
+    for prefix, ds in [("TARGET", target), ("SEASON", seasonal)]:
+        for name, da in ds.data_vars.items():
+            out[f"{prefix}_{name}"] = da
+    return out
+
+
+def _paired_benchmark_matrix(
+    model_forecast,
+    persistence_forecast,
+    observed,
+    masks,
+    grouping,
+    min_samples,
+    n_null,
+    fdr_q,
+    fdr_scope,
+    seed,
+):
+    model_forecast = _target_time(model_forecast)
+    persistence_forecast = _target_time(persistence_forecast)
+    observed = _target_time(observed)
+    model_forecast, persistence_forecast, observed = xr.align(
+        model_forecast, persistence_forecast, observed, join="inner"
+    )
+
+    leads = model_forecast.lead.values.astype(int)
+    regions = list(masks)
+    groups = np.arange(1, 13) if grouping == "month" else np.array(list(SEASON_MONTHS))
+    group_dim = "month" if grouping == "month" else "season"
+    shape = (len(regions), len(leads), len(groups))
+    coords = {"region": regions, "lead": leads, group_dim: groups}
+    dims = ("region", "lead", group_dim)
+    names = ["PSS", "DELTA_ACC", "P_PSS_RAW", "P_DELTA_ACC_RAW"]
+    fields = {
+        name: xr.DataArray(np.full(shape, np.nan, dtype=np.float32), coords=coords, dims=dims)
+        for name in names
+    }
+
+    for ir, region in enumerate(regions):
+        fm = region_mean(model_forecast, masks[region])
+        fp = region_mean(persistence_forecast, masks[region])
+        oo = region_mean(observed, masks[region])
+        for il, lead in enumerate(leads):
+            m = fm.sel(lead=lead)
+            p = fp.sel(lead=lead)
+            m, p, o = xr.align(m, p, oo, join="inner")
+            for ig, group in enumerate(groups):
+                if grouping == "month":
+                    sel = m.target_time.dt.month == int(group)
+                    mm, pp, ob = m.where(sel, drop=True), p.where(sel, drop=True), o.where(sel, drop=True)
+                else:
+                    months = SEASON_MONTHS[str(group)]
+                    sel = m.target_time.dt.month.isin(months)
+                    mm, pp, ob = m.where(sel, drop=True), p.where(sel, drop=True), o.where(sel, drop=True)
+                    mc = mm.resample(target_time="YS").count()
+                    pc = pp.resample(target_time="YS").count()
+                    oc = ob.resample(target_time="YS").count()
+                    mm = mm.resample(target_time="YS").mean().where(mc >= 3)
+                    pp = pp.resample(target_time="YS").mean().where(pc >= 3)
+                    ob = ob.resample(target_time="YS").mean().where(oc >= 3)
+                mm, pp, ob = xr.align(mm, pp, ob, join="inner")
+                valid = np.isfinite(mm.values) & np.isfinite(pp.values) & np.isfinite(ob.values)
+                mv, pv, ov = mm.values[valid], pp.values[valid], ob.values[valid]
+                if mv.size < int(min_samples):
+                    continue
+                loc = {"region": region, "lead": lead, group_dim: group}
+                mse_p = np.mean((pv - ov) ** 2)
+                mse_m = np.mean((mv - ov) ** 2)
+                pss = 1.0 - mse_m / mse_p if np.isfinite(mse_p) and mse_p > 0 else np.nan
+                dacc = acc(mv, ov) - acc(pv, ov)
+                fields["PSS"].loc[loc] = pss
+                fields["DELTA_ACC"].loc[loc] = dacc
+
+                rng = np.random.default_rng(int(seed) + 100000 * ir + 1000 * il + 10 * ig)
+                n = mv.size
+                # PSS null: paired sign flip of squared-error advantage.
+                adv = (pv - ov) ** 2 - (mv - ov) ** 2
+                signs = rng.choice(np.array([-1.0, 1.0]), size=(int(n_null), n))
+                null_pss = np.mean(signs * adv[None, :], axis=1) / mse_p
+                fields["P_PSS_RAW"].loc[loc] = (
+                    (1.0 + np.sum(null_pss >= pss)) / (1.0 + int(n_null))
+                    if np.isfinite(pss) else np.nan
+                )
+
+                # Delta-ACC null: paired random swap between model/persistence.
+                swap = rng.random((int(n_null), n)) < 0.5
+                m0 = np.where(swap, pv[None, :], mv[None, :])
+                p0 = np.where(swap, mv[None, :], pv[None, :])
+                o0 = np.broadcast_to(ov[None, :], m0.shape)
+                dm = np.sqrt(np.sum(m0 ** 2, axis=1) * np.sum(o0 ** 2, axis=1))
+                dp = np.sqrt(np.sum(p0 ** 2, axis=1) * np.sum(o0 ** 2, axis=1))
+                am = np.divide(np.sum(m0 * o0, axis=1), dm, out=np.full(int(n_null), np.nan), where=dm > 0)
+                ap = np.divide(np.sum(p0 * o0, axis=1), dp, out=np.full(int(n_null), np.nan), where=dp > 0)
+                null_da = am - ap
+                null_da = null_da[np.isfinite(null_da)]
+                fields["P_DELTA_ACC_RAW"].loc[loc] = (
+                    (1.0 + np.sum(null_da >= dacc)) / (1.0 + null_da.size)
+                    if np.isfinite(dacc) and null_da.size else np.nan
+                )
+
+    for metric in ["PSS", "DELTA_ACC"]:
+        raw = fields[f"P_{metric}_RAW"]
+        adj = xr.full_like(raw, np.nan)
+        sig = xr.zeros_like(raw, dtype=bool)
+        if fdr_scope in {"region", "subregion"}:
+            for ir in range(raw.sizes["region"]):
+                reject, values = bh_fdr(raw.isel(region=ir).values.ravel(), alpha=fdr_q)
+                adj.values[ir] = values.reshape(raw.isel(region=ir).shape)
+                sig.values[ir] = reject.reshape(raw.isel(region=ir).shape)
+        elif fdr_scope == "global":
+            reject, values = bh_fdr(raw.values.ravel(), alpha=fdr_q)
+            adj.values[:] = values.reshape(raw.shape)
+            sig.values[:] = reject.reshape(raw.shape)
+        else:
+            raise ValueError(fdr_scope)
+        fields[f"P_{metric}_FDR"] = adj.astype(np.float32)
+        fields[f"SIG_{metric}"] = sig & np.isfinite(fields[metric]) & (fields[metric] > 0)
+    return xr.Dataset(fields)
+
+
+def evaluate_verification(
+    forecasts,
+    observed,
+    masks,
+    primary_configuration,
+    persistence_configuration,
+    significance_configurations=None,
+    verification_period=("2013-01-01", "2025-12-31"),
+    min_samples=10,
+    n_boot=5000,
+    min_boot_valid=500,
+    ci_level=0.95,
+    n_null=5000,
+    fdr_q=0.10,
+    target_month_fdr_scope="region",
+    seasonal_fdr_scope="region",
+    seed=42,
+):
+    """Evaluate all forecast configurations with manuscript-consistent nulls.
+
+    ``n_boot``/CI arguments are retained in the public signature for notebook
+    compatibility.  Statistical support in the revised workflow is based on
+    the metric-specific Monte-Carlo null tests described in Supplementary
+    Methods, not on bootstrap p-values.
+    """
+    del n_boot, min_boot_valid, ci_level
+    if significance_configurations is None:
+        significance_configurations = list(forecasts)
+    significance_configurations = set(significance_configurations)
+
+    pieces = []
+    for ic, (name, fcst) in enumerate(forecasts.items()):
+        ds = _evaluate_configuration_null(
+            fcst,
+            observed,
+            masks,
+            verification_period=verification_period,
+            min_samples=min_samples,
+            n_null=n_null,
+            fdr_q=fdr_q,
+            target_month_fdr_scope=target_month_fdr_scope,
+            seasonal_fdr_scope=seasonal_fdr_scope,
+            seed=int(seed) + 1000000 * ic,
+            do_significance=name in significance_configurations,
+        ).expand_dims(configuration=[name])
+        pieces.append(ds)
+    skill = xr.concat(pieces, dim="configuration")
+    skill.attrs.update(
+        verification_start=str(verification_period[0]),
+        verification_end=str(verification_period[1]),
+        null_samples=int(n_null),
+        fdr_q=float(fdr_q),
+        significance=(
+            "ACC: temporal permutation; MSSS: paired squared-error-advantage sign flip; "
+            "BH-FDR applied separately by metric/configuration/region"
+        ),
+    )
+
+    model = forecasts[primary_configuration]
+    persistence = forecasts[persistence_configuration]
+    target_bench = _paired_benchmark_matrix(
+        model, persistence, observed, masks, "month", min_samples, n_null,
+        fdr_q, target_month_fdr_scope, int(seed) + 7000000,
+    )
+    season_bench = _paired_benchmark_matrix(
+        model, persistence, observed, masks, "season", min_samples, n_null,
+        fdr_q, seasonal_fdr_scope, int(seed) + 8000000,
+    )
+    persistence_benchmark = xr.Dataset()
+    for prefix, ds in [("TARGET", target_bench), ("SEASON", season_bench)]:
+        for name, da in ds.data_vars.items():
+            persistence_benchmark[f"{prefix}_{name}"] = da
+    persistence_benchmark.attrs["comparison"] = (
+        f"{primary_configuration} relative to {persistence_configuration}"
+    )
+    return {"skill": skill, "persistence_benchmark": persistence_benchmark}
+
+
+def configuration_summary(skill, first, second):
+    """Compact descriptive comparison between two forecast configurations."""
+    rows = []
+    for region in skill.region.values:
+        for metric in ["ACC", "CENTERED_ACC", "MSSS", "RMSE", "STD_RATIO"]:
+            a = skill[f"TARGET_{metric}"].sel(configuration=first, region=region)
+            b = skill[f"TARGET_{metric}"].sel(configuration=second, region=region)
+            rows.append(
+                {
+                    "region": str(region),
+                    "metric": metric,
+                    "first": str(first),
+                    "second": str(second),
+                    "first_mean": float(a.mean(skipna=True)),
+                    "second_mean": float(b.mean(skipna=True)),
+                    "difference": float((a - b).mean(skipna=True)),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def seasonal_lead_group_comparison(skill, first, second, regions):
+    """Return descriptive ONE-minus-THREE-style seasonal lead-group differences."""
+    rows = []
+    for region in regions:
+        for season in SEASON_MONTHS:
+            for lead_group, leads in LEAD_GROUPS.items():
+                row = {"region": region, "season": season, "lead_group": lead_group}
+                available = [int(L) for L in leads if int(L) in skill.lead.values]
+                for metric in ["ACC", "MSSS"]:
+                    if not available:
+                        a = xr.DataArray(np.nan)
+                        b = xr.DataArray(np.nan)
+                    else:
+                        a = skill[f"SEASON_{metric}"].sel(
+                            configuration=first, region=region, season=season, lead=available
+                        ).mean("lead", skipna=True)
+                        b = skill[f"SEASON_{metric}"].sel(
+                            configuration=second, region=region, season=season, lead=available
+                        ).mean("lead", skipna=True)
+                    row[f"{metric}_{first}"] = float(a)
+                    row[f"{metric}_{second}"] = float(b)
+                    row[f"D{metric}"] = float(a - b)
+                rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def build_trend_adjusted_persistence_forecast(
+    detrended_sst,
+    forecast_template,
+    training_climatology,
+    trend_coefficients,
+    reference_decimal_year,
+    observed_sst,
+    anomaly_reference_period,
+    sea_mask=None,
+):
+    """Construct the manuscript persistence benchmark.
+
+    The detrended SST anomaly observed at initialization is held unchanged to
+    the target time.  The training-period target-month climatology and linear
+    trend evaluated at the target time are then restored, after which forecast
+    and observation are expressed relative to the common fixed verification
+    climatology.
+    """
+    from .forecast import fixed_base_anomaly
+    from .time import datetime_to_decimal_year
+
+    template = _target_time(forecast_template)
+    target_times = pd.DatetimeIndex(template.target_time.values)
+    pieces = []
+    intercept = trend_coefficients.sel(coef="intercept")
+    slope = trend_coefficients.sel(coef="slope")
+
+    for lead in template.lead.values.astype(int):
+        init_times = target_times - pd.DateOffset(months=int(lead))
+        source = detrended_sst.reindex(time=init_times)
+        source = source.rename(time="target_time").assign_coords(
+            target_time=template.target_time.values
+        )
+        month = xr.DataArray(
+            target_times.month,
+            dims=("target_time",),
+            coords={"target_time": template.target_time},
+        )
+        seasonal = training_climatology.sel(month=month).reset_coords(drop=True)
+        dec = xr.DataArray(
+            datetime_to_decimal_year(target_times).astype(np.float32),
+            dims=("target_time",),
+            coords={"target_time": template.target_time},
+        )
+        trend = intercept + slope * (dec - float(reference_decimal_year))
+        absolute = (source + seasonal + trend).astype(np.float32)
+        if sea_mask is not None:
+            absolute = absolute.where(sea_mask)
+        pieces.append(absolute.expand_dims(lead=[int(lead)]))
+
+    absolute = xr.concat(pieces, dim="lead").transpose(
+        "lead", "target_time", "lat", "lon"
+    )
+    absolute.name = "sst_persistence_absolute"
+    return fixed_base_anomaly(
+        absolute_forecast_target=absolute,
+        observed_sst=observed_sst,
+        anomaly_reference_period=tuple(anomaly_reference_period),
+        sea_mask=sea_mask,
+    )

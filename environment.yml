@@ -1,9 +1,12 @@
 name: eams-seof
+
 channels:
   - conda-forge
+
 dependencies:
-  - python=3.11
-  - numpy
+  - python=3.10
+
+  - numpy<2
   - pandas
   - xarray
   - scipy
@@ -12,14 +15,21 @@ dependencies:
   - bottleneck
   - dask
   - pyyaml
-  - matplotlib
+
+  - matplotlib=3.4.3
+  - matplotlib-inline=0.1.7
+  - proplot=0.9.7
   - cartopy
   - geopandas
   - shapely
+
   - jupyterlab
   - ipykernel
+
   - pytest
+
+  - setuptools<82
+
   - pip
   - pip:
       - cmaps
-      - proplot

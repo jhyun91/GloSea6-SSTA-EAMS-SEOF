@@ -249,6 +249,14 @@ def lag_weights(
 
     l1_norm = np.abs(blended).sum("lag")
     final = blended / xr.where(l1_norm > 1e-6, l1_norm, 1.0)
+
+    # Lead 0 is a same-month reconstruction diagnostic, not a forecast.
+    # Keep it exactly reciprocal to the projection by using the current
+    # monthly coefficient only. This does not affect lead-1--12 skill.
+    if 0 in final.lead.values:
+        final.loc[dict(lead=0)] = 0.0
+        final.loc[dict(lead=0, lag=0)] = 1.0
+
     final.name = "lag_weight"
 
     return xr.Dataset(
@@ -264,5 +272,6 @@ def lag_weights(
             "shrinkage_pseudocount": int(shrinkage_pseudocount),
             "input_sequence_months": int(input_sequence_months),
             "maximum_lead_months": int(maximum_lead_months),
+            "lead0_identity": 1,
         },
     )

@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eams-seof"
-version = "0.1.0"
+version = "1.0.0"
 description = "SEOF-based seasonal SST prediction in the East Asian marginal seas"
-requires-python = ">=3.9"
+requires-python = ">=3.10,<3.11"
 
 [tool.setuptools.packages.find]
 where = ["src"]
