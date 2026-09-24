@@ -6,20 +6,20 @@ Reproducible Jupyter implementation of the SEOF-based seasonal SST prediction wo
 
 **Release:** `v1.0.0-paper`
 
-The production forecast is frozen as:
+The paper workflow is frozen as:
 
-- training period: **1993–2012**
-- verification period: **2013–2025**
-- retained basis: **SEOF1–3**
-- monthly projection: cosine-latitude-weighted least squares (`G A = b`)
-- predictor history: preceding **12 monthly projection scores**
-- forecast mapping: pooled + target-month-specific **lag-correlation templates**
-- target-month shrinkage pseudocount: **24**
-- lag sequence normalization: unit absolute sum
-- lead 0: exact same-month reconstruction diagnostic; not used in skill assessment
-- primary forecast: three-mode forecast with **causal rolling mean-state correction**
-- mode sensitivity: independently built **one-mode** versus **uncorrected three-mode** forecast
-- anomaly verification reference: fixed **1993–2012 monthly climatology**
+* training period: **1993–2012**
+* verification period: **2013–2025**
+* retained basis: **SEOF1–3**
+* monthly projection: cosine-latitude-weighted least squares (`G A = b`)
+* predictor history: preceding **12 monthly projection scores**
+* lag weights: pooled + target-month-specific **lag-correlation templates**
+* target-month shrinkage pseudocount: **24**
+* lag sequence normalization: unit absolute sum
+* lead 0: exact same-month reconstruction diagnostic; not used in skill assessment
+* primary forecast: three-mode forecast with **causal rolling mean-state correction**
+* mode sensitivity: independently constructed **one-mode** and **uncorrected three-mode** forecasts
+* anomaly verification reference: fixed **1993–2012 monthly climatology**
 
 The ridge distributed-lag experiment used during model development is **not part of the production release**.
 
@@ -49,18 +49,16 @@ Run in order:
 
 ## Statistical verification
 
-- primary ACC: uncentered anomaly correlation
-- centered ACC: sensitivity diagnostic
-- MSSS reference: zero anomaly relative to the fixed 1993–2012 climatology
-- ACC support: temporal-permutation Monte Carlo null
-- MSSS support: paired squared-error-advantage sign-flip null
-- Benjamini–Hochberg FDR: `q = 0.10`
-- one-mode minus three-mode differences: descriptive retained-basis sensitivity; no configuration-difference inferential test
+* primary ACC: uncentered anomaly correlation
+* centered ACC: sensitivity diagnostic
+* MSSS reference: zero anomaly relative to the fixed 1993–2012 climatology
+* ACC support: temporal-permutation Monte Carlo null
+* MSSS support: paired squared-error-advantage sign-flip null
+* Benjamini–Hochberg FDR: `q = 0.10`
+* one-mode minus three-mode differences: descriptive retained-basis sensitivity; no configuration-difference inferential test
 
 ## Tests
 
 ```bash
 pytest -q
 ```
-
-See `MODEL_SPEC.md` and `RELEASE_NOTES.md` for the frozen model definition and release decisions.
