@@ -46,13 +46,6 @@ Run in order:
 5. `04_SEOF_Forecast_Model.ipynb`
 6. `05_Generate_Forecasts.ipynb`
 7. `06_Evaluate_Forecast_Skill.ipynb`
-8. `07_Release_QA.ipynb`
-
-Optional diagnostic only:
-
-9. `08_Lag_Phase_Diagnostics.ipynb`
-
-`06_Evaluate_Forecast_Skill.ipynb` retains the manuscript plotting layout and includes optional verification-period time-series diagnostics at the end.
 
 ## Statistical verification
 
