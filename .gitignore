@@ -15,3 +15,18 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# NetCDF / CSV files in data and output
+data/*.nc
+data/**/*.nc
+data/*.csv
+data/**/*.csv
+
+output/*.nc
+output/**/*.nc
+output/*.csv
+output/**/*.csv
+
+.DS_Store
+__pycache__/
+*.pyc
